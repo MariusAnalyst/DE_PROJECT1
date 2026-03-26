@@ -1,6 +1,22 @@
 ## ensure the terraform key is not accidentally committed
 Terraform/keys
 
+# Terraform generated files
+.terraform/
+terraform.tfstate
+terraform.tfstate.backup
+*.tfstate
+*.tfstate.backup
+*.tfvars
+*.tfvars.json
+crash.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+.terraform.lock.hcl
+terraform.tfvars
+terraform.tfvars.json
 
 
 # Byte-compiled / optimized / DLL files
@@ -199,22 +215,7 @@ cython_debug/
 # PyPI configuration file
 .pypirc
 
-# Terraform generated files
-.terraform/
-terraform.tfstate
-terraform.tfstate.backup
-*.tfstate
-*.tfstate.backup
-*.tfvars
-*.tfvars.json
-crash.log
-override.tf
-override.tf.json
-*_override.tf
-*_override.tf.json
-.terraform.lock.hcl
-terraform.tfvars
-terraform.tfvars.json
+
 
 # Cursor
 #  Cursor is an AI-powered code editor. `.cursorignore` specifies files/directories to
