@@ -127,43 +127,83 @@ After deployment:
    ```
 
 ### Installing Docker on the VM
-1. Update packages:
-   ```
-   sudo apt-get update
-   ```
+Docker is essential for containerizing applications and running services like Airflow. Follow these step-by-step instructions to install Docker and Docker Compose on a fresh Debian/Ubuntu system.
 
-2. Install Docker:
-   ```
-   sudo apt-get install -y docker.io
-   ```
+#### Step 1: Update Package Index
+First, update your package index to ensure you have the latest package information:
+```bash
+sudo apt update
+```
 
-3. Configure Docker group:
-   ```
-   sudo groupadd docker
-   sudo gpasswd -a $USER docker
-   sudo service docker restart
-   ```
+#### Step 2: Install Prerequisites
+Install the necessary packages for adding Docker's official repository:
+```bash
+sudo apt install apt-transport-https ca-certificates curl gnupg lsb-release -y
+```
 
-4. Log out and back in, then verify:
-   ```
-   docker --version
-   ```
+#### Step 3: Add Docker's Official GPG Key
+Download and add Docker's official GPG key to verify package authenticity:
+```bash
+curl -fsSL https://download.docker.com/linux/debian/gpg | sudo gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
+```
 
-5. Install Docker Compose:
-   ```
-   mkdir ~/bin
-   wget https://github.com/docker/compose/releases/download/v2.24.7/docker-compose-linux-x86_64 -O ~/bin/docker-compose
-   chmod +x ~/bin/docker-compose
-   ```
+#### Step 4: Add Docker Repository
+Add Docker's official repository to your system's package sources:
+```bash
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/debian $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+```
 
-6. Add to PATH in `~/.bashrc`:
-   ```
-   export PATH="${HOME}/bin:${PATH}"
-   ```
-   Then run:
-   ```
-   source ~/.bashrc
-   ```
+#### Step 5: Update Package Index Again
+Update the package index to include the new Docker repository:
+```bash
+sudo apt update
+```
+
+#### Step 6: Install Docker Engine and Docker Compose
+Install Docker Engine, CLI, containerd, and Docker Compose plugin:
+```bash
+sudo apt install docker-ce docker-ce-cli containerd.io docker-compose-plugin -y
+```
+
+#### Step 7: Start Docker Service
+Start the Docker service:
+```bash
+sudo systemctl start docker
+```
+
+#### Step 8: Enable Docker to Start on Boot
+Configure Docker to start automatically when the system boots:
+```bash
+sudo systemctl enable docker
+```
+
+#### Step 9: Add User to Docker Group (Optional but Recommended)
+Add your user to the docker group to run Docker commands without sudo:
+```bash
+sudo usermod -aG docker $USER
+```
+
+**Note:** After running this command, log out and back in for the group changes to take effect.
+
+#### Step 10: Verify Installation
+Verify that Docker and Docker Compose are installed correctly:
+```bash
+docker --version
+docker compose version
+```
+
+#### Step 11: Test Docker Installation
+Run a test container to ensure Docker is working properly:
+```bash
+sudo docker run hello-world
+```
+
+You should see a "Hello from Docker!" message confirming successful installation.
+
+**Troubleshooting:**
+- If you get permission errors, ensure you've logged out and back in after adding yourself to the docker group
+- If Docker commands still require sudo, run: `newgrp docker` in your terminal session
+- For any installation issues, refer to the [official Docker documentation](https://docs.docker.com/engine/install/debian/)
 
 7. Clone the Repository:
    ```
