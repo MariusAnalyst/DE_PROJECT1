@@ -1,3 +1,6 @@
+###
+ Apache_airflow/logs/
+
 ## ensure the terraform key is not accidentally committed
 Terraform/keys
 
