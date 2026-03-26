@@ -157,6 +157,31 @@ docker compose exec postgres pg_isready -U airflow -d airflow
 curl http://localhost:8080/health
 ```
 
+## Airflow 3.0 Migration & Troubleshooting
+
+### Login Issues (Authentication Manager)
+
+**Issue:** In Airflow 3.0, the default `SimpleAuthManager` was introduced, which generates random passwords and does not support the traditional `_AIRFLOW_WWW_USER_CREATE` environment variables.
+
+**Resolution:** 
+To use the traditional `admin/admin` login, the `FabAuthManager` (from the FAB provider) must be explicitly configured in `docker-compose.yml`:
+
+1. **Set the Auth Manager:**
+   ```yaml
+   AIRFLOW__CORE__AUTH_MANAGER: airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager
+   ```
+2. **Use the correct command:**
+   The `webserver` command is deprecated in 3.0. Use `api-server` instead:
+   ```yaml
+   command: api-server
+   ```
+3. **Reset if necessary:**
+   If you switched managers and are seeing `500 Internal Server Error` or database transaction aborts, perform a clean reset (this wipes the metadata DB but keeps your mapped DAGs):
+   ```bash
+   docker compose down -v
+   docker compose up -d
+   ```
+
 ### Reset Everything
 
 Complete reset (⚠️ deletes all data):
