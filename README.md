@@ -18,14 +18,14 @@ Transform raw mental health data into actionable visualizations, empowering stak
 This project leverages cutting-edge cloud and data engineering tools:
 
 - [<img src="https://www.terraform.io/img/terraform-logo.png" alt="Terraform" width="50"/> Terraform](https://www.terraform.io/docs) - Infrastructure as Code
-- [<img src="https://cloud.google.com/images/cloud-logo.png" alt="Google Cloud Platform" width="50"/> Google Cloud Platform (GCP)](https://cloud.google.com/docs) - Cloud Services
+- [<img src="https://icons8.com/icons/set/google-cloud" alt="Google Cloud Platform" width="50"/> Google Cloud Platform (GCP)](https://cloud.google.com/docs) - Cloud Services
 - [<img src="https://airflow.apache.org/docs/apache-airflow/stable/_images/pin_large.png" alt="Apache Airflow" width="50"/> Apache Airflow](https://airflow.apache.org/docs/) - Workflow Orchestration
 - [<img src="https://cloud.google.com/images/products/bigquery.png" alt="BigQuery" width="50"/> Google BigQuery](https://cloud.google.com/bigquery/docs) - Data Warehouse
 - [<img src="https://docs.getdbt.com/img/dbt-logo.png" alt="dbt" width="50"/> dbt](https://docs.getdbt.com/) - Data Transformation
 - [<img src="https://powerbi.microsoft.com/pictures/application-logos/svg/powerbi.svg" alt="Power BI" width="50"/> Power BI](https://docs.microsoft.com/en-us/power-bi/) - Data Visualization
 
 ## Problem Description
-This initiative utilizes the "Mental Health Dataset" from Kaggle, available [here](https://www.kaggle.com/datasets/divaniazzahra/mental-health-dataset). This open-source dataset provides a foundation for analyzing mental health patterns.
+This Project utilizes the "Mental Health Dataset" from Kaggle, available [here](https://www.kaggle.com/datasets/divaniazzahra/mental-health-dataset). This open-source dataset provides a foundation for analyzing mental health patterns.
 
 The goal is to construct a comprehensive data pipeline that ingests, processes, and visualizes mental health data, revealing insights across time, geography, and demographic variables to inform public health strategies.
 
