@@ -205,10 +205,17 @@ This section outlines the steps to set up Java, Apache Spark, and PySpark on the
 
 2. Update environment variables:
    ```bash
-   export SPARK_HOME="${HOME}/spark/spark-3.5.0-bin-hadoop3"
+   export SPARK_HOME="${HOME}/spark-3.5.0-bin-hadoop3"
    export PATH="${SPARK_HOME}/bin:${PATH}"
    ```
    Add these lines to `~/.bashrc` for persistence.
+
+3. **Install GCS Connector**:
+   To allow Spark to read from and write to Google Cloud Storage (`gs://` paths), download the GCS connector JAR:
+   ```bash
+   wget https://storage.googleapis.com/hadoop-lib/gcs/gcs-connector-hadoop3-latest.jar
+   mv gcs-connector-hadoop3-latest.jar ${SPARK_HOME}/jars/
+   ```
 
 #### Install Python, Jupyter, and Pandas
 1. Install Python and Jupyter:
