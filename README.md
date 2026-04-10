@@ -233,6 +233,7 @@ This section provides detailed steps to set up Apache Airflow using Docker Compo
 - Docker and Docker Compose installed
 - At least 2GB of available RAM
 - Ports 8080 (Airflow UI) and 5432 (PostgreSQL) available
+- **Kaggle Account**: Required for data ingestion.
 
 #### Quick Start
 1. **Navigate to the Airflow directory:**
@@ -240,53 +241,89 @@ This section provides detailed steps to set up Apache Airflow using Docker Compo
    cd Apache_airflow
    ```
 
-2. **Start services:**
+2. **Kaggle Configuration (Crucial for Ingestion):**
+   - Place your `kaggle.json` file in `~/.kaggle/kaggle.json`.
+   - **Permissions**: Ensure the directory and file are accessible by the Docker user (UID 50000):
+     ```bash
+     chmod 755 ~/.kaggle
+     chmod 644 ~/.kaggle/kaggle.json
+     ```
+
+3. **Data Directory Permissions:**
+   - Ensure the `data/` directory is world-writable so Airflow can save the downloaded files:
+     ```bash
+     chmod 777 ../data
+     ```
+
+4. **Start services:**
    ```bash
    docker compose up -d
    ```
 
-3. **Access Airflow UI:**
+5. **Access Airflow UI:**
    - URL: http://localhost:8080
    - Username: `admin`
    - Password: `admin`
 
-4. **Stop services:**
-   ```bash
-   docker compose down
-   ```
+#### Kaggle Data Ingestion Setup
+
+The project includes an automated pipeline to fetch the "Mental Health Dataset" directly from Kaggle.
+
+##### 1. Docker Compose Configuration
+The `docker-compose.yml` is configured to:
+- **Install Dependencies**: Automatically installs `kaggle` and `pandas` at runtime using:
+  ```yaml
+  _PIP_ADDITIONAL_REQUIREMENTS: "kaggle pandas"
+  ```
+- **Volume Mounts**: Maps local directories for persistent storage and configuration:
+  ```yaml
+  volumes:
+    - ../data:/opt/airflow/data               # For downloaded datasets
+    - ~/.kaggle:/home/airflow/.kaggle          # For Kaggle API credentials
+  ```
+
+##### 2. Automated Ingestion Script (`ingestion script.ipynb`)
+For manual testing or initial exploration, a Jupyter notebook is provided with a reusable function:
+```python
+from kaggle.api.kaggle_api_extended import KaggleApi
+
+def download_kaggle_dataset(dataset_slug, download_path='./data'):
+    api = KaggleApi()
+    api.authenticate()
+    api.dataset_download_files(dataset_slug, path=download_path, unzip=True, force=True)
+```
+
+##### 3. Airflow DAG (`kaggle_ingestion_dag`)
+Located in `Apache_airflow/dags/mental_health_etl.py`, this DAG automates the daily ingestion:
+- **`download_from_kaggle`**: Authenticates and downloads the latest ZIP file, extracting it to `/opt/airflow/data`.
+- **`process_and_verify_data`**: Uses `pandas` to read the CSV and log data statistics (row/column counts) to ensure the file is valid.
 
 #### Directory Structure
 ```
-Apache_airflow/
-├── docker-compose.yml    # Docker Compose configuration
-├── dags/                 # Airflow DAGs directory
-│   └── sample_dag.py     # Sample DAG for testing
-├── logs/                 # Airflow task logs
-└── plugins/              # Custom Airflow plugins
+.
+├── ingestion script.ipynb    # Manual ingestion & testing
+├── data/                     # Host directory for datasets (mounted to /opt/airflow/data)
+└── Apache_airflow/
+    ├── docker-compose.yml    # Orchestration & Volume setup
+    ├── dags/                 # Airflow DAGs
+    │   └── mental_health_etl.py # Kaggle ETL Pipeline
+    ├── logs/                 # Task execution logs
+    └── plugins/              # Custom plugins
 ```
 
 #### Troubleshooting
 
-1. **Port conflicts:** Ensure ports 8080 and 5432 are available.
-   ```bash
-   lsof -i :8080
-   lsof -i :5432
-   ```
+1. **Permission Denied (Kaggle API):**
+   - If the task fails with `Missing username in configuration`, verify `~/.kaggle/kaggle.json` is world-readable (`chmod 644`) and the mount in `docker-compose.yml` is correct.
 
-2. **DAG not appearing:**
-   - Check DAG syntax: `python dags/your_dag.py`
-   - Verify file is in `dags/` directory
-   - Check scheduler logs: `docker compose logs airflow-scheduler`
+2. **Permission Denied (Data Folder):**
+   - If `pandas` or `kaggle` cannot write to `/opt/airflow/data`, run `chmod 777 data/` on the host machine.
 
-3. **Connection refused:** Wait longer for PostgreSQL to be ready.
-   ```bash
-   docker compose ps  # Check service health
-   ```
+3. **ModuleNotFoundError (kaggle/pandas):**
+   - These are installed on startup. If missing, restart the containers: `docker compose down && docker compose up -d`.
 
-4. **Permission issues:** Ensure Docker has proper permissions.
-   ```bash
-   sudo usermod -aG docker $USER
-   ```
+4. **DAG not appearing:**
+   - Airflow can take up to 60 seconds to parse new files. Refresh the UI and ensure no filters (like "Active") are hiding the `kaggle_ingestion_dag`.
 
 #### Service Health Check
 ```bash
