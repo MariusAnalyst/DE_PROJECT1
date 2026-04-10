@@ -2,7 +2,9 @@
  Apache_airflow/logs/
 
 ## ensure the terraform key is not accidentally committed
+key/*.json
 Terraform/keys
+
 
 # Terraform generated files
 .terraform/

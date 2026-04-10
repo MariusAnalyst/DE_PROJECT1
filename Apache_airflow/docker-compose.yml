@@ -15,6 +15,10 @@ x-airflow-env: &airflow-env
   # Ensure logs are served correctly on port 8793
   AIRFLOW__LOGGING__LOG_SERVER_PORT: 8793
   _PIP_ADDITIONAL_REQUIREMENTS: "kaggle pandas"
+    # Add Spark to PATH inside container
+  PATH: "/usr/local/spark/bin:${PATH}"
+
+
 
 services:
   postgres:
@@ -56,6 +60,7 @@ services:
       - ./plugins:/opt/airflow/plugins
       - ../data:/opt/airflow/data
       - /home/marius/.kaggle:/home/airflow/.kaggle
+      - /home/marius/spark-3.5.0-bin-hadoop3:/usr/local/spark
     restart: "no"
 
   airflow-webserver:
@@ -79,7 +84,7 @@ services:
       - ./plugins:/opt/airflow/plugins
       - ../data:/opt/airflow/data
       - /home/marius/.kaggle:/home/airflow/.kaggle
-
+      - /home/marius/spark-3.5.0-bin-hadoop3:/usr/local/spark
   airflow-scheduler:
     image: apache/airflow:2.10.2
     container_name: airflow-scheduler
@@ -99,6 +104,7 @@ services:
       - ./plugins:/opt/airflow/plugins
       - ../data:/opt/airflow/data
       - /home/marius/.kaggle:/home/airflow/.kaggle
+      - /home/marius/spark-3.5.0-bin-hadoop3:/usr/local/spark
 
 volumes:
   postgres_data:
