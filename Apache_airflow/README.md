@@ -16,6 +16,40 @@ Uses **LocalExecutor** for simplicity - tasks run sequentially on the scheduler 
 - Docker and Docker Compose installed
 - At least 2GB of available RAM
 - Port 8080 (Airflow UI) and 5432 (PostgreSQL) available
+- **Java 11** and **Apache Spark 3.5.0** (installed manually)
+
+## Manual Installations (Java & Spark)
+
+To support Spark-based DAGs and processing, Java and Spark were installed manually in the home directory.
+
+### Installation Steps
+
+1. **Java JDK 11**:
+   - Downloaded and placed in `${HOME}/jdk-11.0.2`.
+2. **Apache Spark 3.5.0**:
+   - Downloaded `spark-3.5.0-bin-hadoop3.tgz` to `${HOME}`.
+   - Extracted using: `tar -xzf ~/spark-3.5.0-bin-hadoop3.tgz -C ~/`.
+
+### System Configuration Changes
+
+The following environment variables were added to `~/.bashrc` to make the binaries accessible system-wide:
+
+```bash
+export JAVA_HOME="${HOME}/jdk-11.0.2"
+export SPARK_HOME="${HOME}/spark-3.5.0-bin-hadoop3"
+export PATH="${JAVA_HOME}/bin:${SPARK_HOME}/bin:${PATH}"
+```
+
+To apply these changes in your current session, run:
+```bash
+source ~/.bashrc
+```
+
+Verification:
+```bash
+java -version
+spark-shell --version
+```
 
 ## Quick Start
 
