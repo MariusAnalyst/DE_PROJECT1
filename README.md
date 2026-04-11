@@ -11,6 +11,12 @@
   - [Docker Installation](#docker-installation)
   - [Spark Environment Setup](#spark-environment-setup)
   - [dbt Core Setup and BigQuery Configuration](#dbt-core-setup-and-bigquery-configuration)
+- [dbt Implementation Details](#dbt-implementation-details)
+  - [dbt Project Structure and Models](#dbt-project-structure-and-models)
+  - [Running dbt Models](#running-dbt-models)
+  - [Accessing Transformed Data](#accessing-transformed-data-in-bigquery)
+  - [Automating dbt Jobs](#automating-dbt-jobs-to-run-daily)
+  - [Monitoring and Troubleshooting](#monitoring-and-troubleshooting)
 - [Next Steps](#next-steps)
 
 ## Objective
@@ -375,6 +381,10 @@ Several key configurations were implemented to ensure smooth execution:
 *   **GCP Authentication**: The `GOOGLE_APPLICATION_CREDENTIALS` variable was added to the Airflow environment, pointing to the mounted key path. This allows GCP Operators (like `GCSToBigQueryOperator`) to authenticate without manual connection setup in the UI.
 *   **Java Runtime**: By mounting the host's JDK and setting `JAVA_HOME`, we resolved the `java: command not found` errors that typically occur when running Spark jobs in standard Airflow images.
 
+
+Dag running spark, python uploading data to gcp and bigquery
+![air_flow Dag]](images/airflow_orchestration.png)
+
 ## Next Steps
 With infrastructure in place, proceed to:
 - Data ingestion using python, spark 
@@ -466,4 +476,303 @@ The raw data sources are defined in `models/sources.yml`. To pull data from the 
 # Run the staging model
 dbt run --select stg_mental_health
 ```
+
+---
+
+## dbt Implementation Details
+
+### 7. dbt Project Structure and Models
+
+The dbt project is organized as follows:
+
+```
+dbt/mental_health_data/
+├── dbt_project.yml                 # Project configuration
+├── models/
+│   ├── example/
+│   │   ├── my_first_dbt_model.sql
+│   │   ├── my_second_dbt_model.sql
+│   │   └── schema.yml
+│   ├── staging/
+│   │   ├── stg_mental_health.sql   # Primary staging model
+│   │   └── sources.yml             # Data source definitions
+│   ├── intermediate/               # (Placeholder for intermediate transformations)
+│   └── marts/
+│       └── fct_mental_health_analysis.sql  # Fact table with analytical dimensions
+├── macros/                         # Custom dbt macros
+├── tests/                          # Data quality tests
+├── seeds/                          # Static data files
+└── logs/                           # Execution logs
+```
+
+#### Models Description
+
+1. **Staging Model (`stg_mental_health.sql`)**
+   - **Type**: View
+   - **Purpose**: Cleans and standardizes raw mental health data from BigQuery
+   - **Source**: `raw_mental_health.mental_health_data` table
+   - **Columns**: All columns from raw data (Timestamp, Gender, Country, Occupation, etc.)
+   - **Operations**: Simple transformation using `SELECT *` to pull data from source
+
+2. **Fact Table Model (`fct_mental_health_analysis.sql`)**
+   - **Type**: Table (Default materialization)
+   - **Purpose**: Creates an analytical fact table with curated columns and cleaned naming conventions
+   - **Dependencies**: References `stg_mental_health` staging model
+   - **Key Dimensions**:
+     - `created_at` (from Timestamp)
+     - `gender`, `country`, `occupation`
+     - `self_employed` status
+   - **Mental Health Indicators**:
+     - Family history, treatment status
+     - Days indoors, growing stress levels
+     - Habit changes, mental health history
+     - Mood swings, coping struggles
+     - Work interest, social weakness
+     - Interview responses, care options
+   - **Output**: Ready for visualization and analysis in Power BI
+
+### 8. Running dbt Models
+
+#### Run All Models
+```bash
+cd C:\Users\amben\Desktop\Mentel_Health_Project\DE_PROJECT1\dbt\mental_health_data
+dbt run
+```
+
+#### Run Specific Models
+```bash
+# Run only the staging model
+dbt run --select stg_mental_health
+
+# Run only the fact table model
+dbt run --select fct_mental_health_analysis
+```
+
+#### Compile Models (Without Executing)
+```bash
+dbt compile
+```
+
+#### Generate Documentation
+```bash
+dbt docs generate
+dbt docs serve  # Opens documentation UI on localhost:8000
+```
+
+### 9. Accessing Transformed Data in BigQuery
+
+After running dbt models, the transformed data is available in BigQuery:
+
+**Dataset**: `mental_health_data` (in project `teraform-mar`)
+
+**Tables/Views Created**:
+- `my_first_dbt_model` (Table)
+- `stg_mental_health` (View)
+- `my_second_dbt_model` (View)
+- `fct_mental_health_analysis` (Table)
+
+**Access Methods**:
+
+1. **BigQuery Console** (Web UI):
+   - Navigate to [Google Cloud Console](https://console.cloud.google.com/)
+   - Go to BigQuery > Projects > `teraform-mar` > Dataset > `mental_health_data`
+   - View tables and execute SQL queries
+
+2. **Query in BigQuery**:
+   ```sql
+   SELECT * FROM `teraform-mar.mental_health_data.fct_mental_health_analysis` LIMIT 10;
+   ```
+
+3. **Connect from Power BI**:
+   - Create a new data source: BigQuery connector
+   - Project: `teraform-mar`
+   - Dataset: `mental_health_data`
+   - Select tables for visualization
+
+### 10. Automating dbt Jobs to Run Daily
+
+dbt can be automated to run on a schedule using several approaches:
+
+#### Option 1: Using dbt Cloud (Recommended for Production)
+
+dbt Cloud provides a fully managed solution with scheduling, logging, and monitoring:
+
+1. **Sign Up**: Create an account at [dbt Cloud](https://cloud.getdbt.com/)
+
+2. **Connect Repository**:
+   - Link your GitHub/GitLab repository containing the dbt project
+   - Authorize dbt Cloud to access your repository
+
+3. **Create dbt Cloud Job**:
+   - Click "New Job" → "Deploy Job"
+   - Select your project and environment
+   - Command: `dbt run`
+   - Set schedule: Daily at a specific time (e.g., 2:00 AM UTC)
+
+4. **Configure Notifications** (Optional):
+   - Slack notifications on job success/failure
+   - Email alerts
+
+#### Option 2: Using Apache Airflow (Recommended for Hybrid Setup)
+
+Since your project already uses Airflow, add a dbt task to the pipeline:
+
+1. **Create Airflow DAG** (`Apache_airflow/dags/dbt_transformation_dag.py`):
+   ```python
+   from airflow import DAG
+   from airflow.operators.bash import BashOperator
+   from datetime import datetime, timedelta
+
+   default_args = {
+       'owner': 'data-engineering',
+       'retries': 2,
+       'retry_delay': timedelta(minutes=5),
+       'start_date': datetime(2024, 1, 1),
+   }
+
+   dag = DAG(
+       'daily_dbt_transformation',
+       default_args=default_args,
+       description='Run dbt models daily',
+       schedule_interval='0 2 * * *',  # 2 AM UTC every day
+       catchup=False,
+   )
+
+   dbt_run = BashOperator(
+       task_id='run_dbt_models',
+       bash_command="""
+           cd /path/to/dbt/mental_health_data && \
+           source .venv/bin/activate && \
+           dbt run --profiles-dir ~/.dbt
+       """,
+       dag=dag,
+   )
+
+   dbt_test = BashOperator(
+       task_id='test_dbt_models',
+       bash_command="""
+           cd /path/to/dbt/mental_health_data && \
+           source .venv/bin/activate && \
+           dbt test --profiles-dir ~/.dbt
+       """,
+       dag=dag,
+   )
+
+   dbt_run >> dbt_test
+   ```
+
+2. **Deploy in Airflow**:
+   - Copy the DAG file to `Apache_airflow/dags/`
+   - Refresh Airflow UI to register the DAG
+   - Enable the DAG and it will run automatically according to schedule
+
+3. **Monitor Execution**:
+   - View DAG runs in Airflow UI at http://localhost:8080
+   - Check logs for any failures
+
+#### Option 3: Using a Cron Job (Linux/Windows Task Scheduler)
+
+For simple scheduling without a full orchestration tool:
+
+**On Linux**:
+```bash
+# Edit crontab
+crontab -e
+
+# Add this line to run dbt daily at 2 AM
+0 2 * * * cd /path/to/dbt/mental_health_data && /path/to/.venv/bin/dbt run
+```
+
+**On Windows (Task Scheduler)**:
+1. Open Task Scheduler
+2. Create Basic Task → Set trigger to "Daily"
+3. Set time to 2:00 AM
+4. Action: Start a program
+5. Program: `C:\Users\amben\.venv\Scripts\python.exe`
+6. Arguments: `-m dbt.cli run`
+7. Start in: `C:\Users\amben\Desktop\Mentel_Health_Project\DE_PROJECT1\dbt\mental_health_data`
+
+#### Option 4: Using GitHub Actions (CI/CD)
+
+Automate dbt runs via GitHub Actions on schedule:
+
+1. **Create Workflow File** (`.github/workflows/dbt-run.yml`):
+   ```yaml
+   name: Daily dbt Run
+   on:
+     schedule:
+       - cron: '0 2 * * *'  # Run daily at 2 AM UTC
+   
+   jobs:
+     dbt-run:
+       runs-on: ubuntu-latest
+       steps:
+         - uses: actions/checkout@v3
+         - name: Set up Python
+           uses: actions/setup-python@v4
+           with:
+             python-version: '3.10'
+         - name: Install dbt
+           run: |
+             pip install dbt-core dbt-bigquery
+         - name: Configure dbt
+           run: |
+             mkdir -p ~/.dbt
+             echo "${{ secrets.DBT_PROFILES_YML }}" > ~/.dbt/profiles.yml
+         - name: Run dbt
+           run: |
+             cd dbt/mental_health_data
+             dbt run
+   ```
+
+2. **Add Secrets**:
+   - GitHub Repo → Settings → Secrets
+   - Add `DBT_PROFILES_YML` with your `profiles.yml` content
+   - Add `GCP_SERVICE_ACCOUNT_KEY` for BigQuery authentication
+
+### 11. Monitoring and Troubleshooting
+
+#### View dbt Logs
+```bash
+# Logs are stored in the dbt project
+ls -la dbt/mental_health_data/logs/
+
+# View run results
+cat dbt/mental_health_data/target/run_results.json
+```
+
+#### Common Issues
+
+1. **Connection Errors**:
+   ```bash
+   dbt debug
+   ```
+   Ensures all configurations and connections are valid.
+
+2. **Model Compilation Errors**:
+   - Check SQL syntax in model files
+   - Ensure all referenced sources exist in BigQuery
+   - Validate column names and data types
+
+3. **Permission Issues**:
+   - Verify service account has `BigQuery Admin` and `Storage Admin` roles in GCP
+   - Check that `dbt_project.yml` and `profiles.yml` paths are correct
+
+4. **Performance Issues**:
+   - Monitor BigQuery job execution times
+   - Use dbt's `--threads` parameter to adjust concurrency:
+     ```bash
+     dbt run --threads 4
+     ```
+
+the linage in Dbt
+![dbt lineage](images/dbt_lineage.png)
+
+
+Visualization in Power BI
+connection to dbt fact table in big query using the big query connection in power BI
+and generation of charts
+
+![Power BI report](images/powerbi_report.png)
+
 
