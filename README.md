@@ -383,7 +383,8 @@ Several key configurations were implemented to ensure smooth execution:
 
 
 Dag running spark, python uploading data to gcp and bigquery
-![air_flow Dag]](images/airflow_orchestration.png)
+![air_flow Dag](images/airflow_orchestration.png)
+
 
 ## Next Steps
 With infrastructure in place, proceed to:
