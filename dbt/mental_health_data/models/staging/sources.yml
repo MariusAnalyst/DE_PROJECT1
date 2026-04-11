@@ -1,0 +1,10 @@
+version: 2
+
+sources:
+  - name: raw_mental_health
+    description: "This source contains the raw mental health data collected for the project in bigquery."
+    database: teraform-mar # project name in google cloud
+    schema: Mar_Mental_Health_Big_Data_Project # name of dataset in bigquery
+    tables:
+      - name: mental_health_data # name of table in bigquery
+        description: "This table contains the raw mental health data collected for the project in bigquery."

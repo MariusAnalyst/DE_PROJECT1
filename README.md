@@ -10,6 +10,7 @@
   - [Terraform Deployment](#terraform-deployment)
   - [Docker Installation](#docker-installation)
   - [Spark Environment Setup](#spark-environment-setup)
+  - [dbt Core Setup and BigQuery Configuration](#dbt-core-setup-and-bigquery-configuration)
 - [Next Steps](#next-steps)
 
 ## Objective
@@ -381,4 +382,88 @@ With infrastructure in place, proceed to:
 - Data transformation via dbt.
 - Dashboard creation in Power BI.
 
+ Installing dbt-core and Adapters
+With the virtual environment activated, install dbt-core along with the dbt-bigquery and dbt-duckdb adapters.
+
+pip install dbt-core dbt-bigquery dbt-duckdb
+
 Refer to individual tool documentation for detailed implementation.
+
+## dbt Core Setup and BigQuery Configuration
+
+This project uses dbt (data build tool) for transforming raw data in BigQuery into analytical models.
+
+### 1. Installation of dbt Core and BigQuery Adapter
+
+It is recommended to use a Python virtual environment to manage dbt and its adapters.
+
+```bash
+# Create and activate a virtual environment
+python -m venv .venv
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+
+# Install dbt Core and the BigQuery adapter
+pip install dbt-core dbt-bigquery
+```
+
+### 2. Confirming Installation
+
+Verify that dbt and the BigQuery adapter are correctly installed:
+
+```bash
+dbt --version
+```
+You should see `Core: 1.x.x` and `bigquery: 1.x.x` in the output.
+
+### 3. VS Code Extensions for dbt
+
+For an optimized development experience, install these extensions:
+- **dbt Power User**: Highly recommended for model lineage, real-time query validation, and compiled SQL preview.
+- **dbt**: Basic syntax highlighting and support.
+
+### 4. Configuring dbt to Connect to BigQuery
+
+dbt uses a `profiles.yml` file to store connection details. This file is typically located at `~/.dbt/profiles.yml` or `C:\Users\<User>\.dbt\profiles.yml`.
+
+#### Service Account Key
+The project uses a Service Account JSON key for authentication, located at:
+`DE_PROJECT1/Terraform/keys/teraform-mar-0fb97fcd6586.json`
+
+#### profiles.yml Configuration
+Update your `profiles.yml` with the following:
+
+```yaml
+mental_health_data:
+  outputs:
+    dev:
+      type: bigquery
+      method: service-account
+      project: teraform-mar
+      dataset: mental_health_data
+      threads: 1
+      keyfile: C:\Users\amben\Desktop\Mentel_Health_Project\DE_PROJECT1\Terraform\keys\teraform-mar-0fb97fcd6586.json
+      location: US
+      priority: interactive
+      job_execution_timeout_seconds: 300
+      job_retries: 1
+  target: dev
+```
+
+### 5. Verifying the Connection
+
+Navigate to the dbt project directory (`DE_PROJECT1/dbt/mental_health_data`) and run:
+
+```bash
+dbt debug
+```
+A successful connection will show `Connection test: [OK connection ok]`.
+
+### 6. Working with Data Sources
+
+The raw data sources are defined in `models/sources.yml`. To pull data from the raw BigQuery dataset and create your first staging model:
+
+```bash
+# Run the staging model
+dbt run --select stg_mental_health
+```
+
