@@ -15,7 +15,7 @@
 ## Objective
 **Unlocking Insights into Mental Health: Building a Robust Data Pipeline for Global Analysis**
 
-Transform raw mental health data into actionable visualizations, empowering stakeholders to identify trends, geographic patterns, and temporal shifts in mental well-being across populations.
+The primary objective of this project is to engineer an automated, end-to-end data intelligence pipeline that monitors and analyzes the global intersection of professional environments and mental health outcomes. By leveraging Airflow, PySpark, and Google Cloud Platform, the project transforms static global survey data into a dynamic analytical ecosystem. This system is designed to identify shifting trends in workplace stress, bridge the 'treatment gap' through predictive data modeling, and provide public health stakeholders with a real-time diagnostic tool to optimize workplace wellness and intervention strategies
 
 ## Technologies Used
 This project leverages cutting-edge cloud and data engineering tools:
@@ -294,10 +294,10 @@ For manual testing or initial exploration, a Jupyter notebook is provided with a
 ```python
 from kaggle.api.kaggle_api_extended import KaggleApi
 
-def download_kaggle_dataset(dataset_slug, download_path='./data'):
+def download_kaggle_dataset(dataset, download_path='./data'):
     api = KaggleApi()
     api.authenticate()
-    api.dataset_download_files(dataset_slug, path=download_path, unzip=True, force=True)
+    api.dataset_download_files(dataset, path=download_path, unzip=True, force=True)
 ```
 
 ##### 3. Airflow DAG (`kaggle_ingestion_dag`)
@@ -344,12 +344,41 @@ docker compose exec postgres pg_isready -U airflow -d airflow
 curl http://localhost:8080/health
 ```
 
+## Advanced Configuration: Integrating Airflow (Docker) with Local Spark & GCP
+
+To achieve a fully automated pipeline that leverages high-performance processing, this project uses a hybrid architecture where **Apache Airflow runs in Docker** while utilizing **Spark and Java installed on the host Linux machine**.
+
+### 1. Hybrid Environment Architecture
+*   **Host Machine**: Houses the Spark 3.5.0 binaries and OpenJDK 11. This allows for persistent management of Spark configurations and JARs (like the GCS connector).
+*   **Docker Containers**: Airflow services (Webserver, Scheduler, Init) run in isolated containers but access the host's Spark and Java through high-performance volume mounts.
+
+### 2. Dependency Management
+To enable the `mental_health_full_pipeline` DAG, the following dependencies are automatically managed:
+*   **PIP Requirements**: `pyspark`, `kaggle`, and `pandas` are injected into the containers at runtime via the `_PIP_ADDITIONAL_REQUIREMENTS` variable in `docker-compose.yml`.
+*   **Spark-GCS Connectivity**: The `gcs-connector-hadoop3-latest.jar` is placed in the host's Spark `jars/` directory, making it available to the containerized Airflow workers.
+
+### 3. Critical Volume Mounts (`docker-compose.yml`)
+The following mappings were established to bridge the Host and Docker environments:
+| Host Path | Container Path | Purpose |
+| :--- | :--- | :--- |
+| `~/spark-3.5.0-bin-hadoop3` | `/usr/local/spark` | Provides Spark binaries and PySpark libraries. |
+| `~/jdk-11.0.2` | `/usr/local/openjdk-11` | Provides Java runtime required by Spark. |
+| `../key` | `/opt/airflow/key` | Grants access to GCP Service Account JSON keys. |
+| `~/.kaggle` | `/home/airflow/.kaggle` | Grants access to Kaggle API credentials. |
+
+### 4. Environment Configuration & Troubleshooting
+Several key configurations were implemented to ensure smooth execution:
+
+*   **PATH Resolution**: A customized `PATH` was set inside the containers to include `/usr/local/spark/bin` and `/usr/local/openjdk-11/bin` while preserving the default Airflow binary paths. This fixed the "airflow: command not found" error encountered during initial setup.
+*   **PySpark Integration**: `PYTHONPATH` was configured to point to `/usr/local/spark/python` and the necessary `py4j` source ZIPs, allowing Airflow's Python interpreter to import `pyspark` correctly.
+*   **GCP Authentication**: The `GOOGLE_APPLICATION_CREDENTIALS` variable was added to the Airflow environment, pointing to the mounted key path. This allows GCP Operators (like `GCSToBigQueryOperator`) to authenticate without manual connection setup in the UI.
+*   **Java Runtime**: By mounting the host's JDK and setting `JAVA_HOME`, we resolved the `java: command not found` errors that typically occur when running Spark jobs in standard Airflow images.
+
 ## Next Steps
 With infrastructure in place, proceed to:
-- Data ingestion using Mage.
+- Data ingestion using python, spark 
 - Workflow orchestration with Airflow.
 - Data transformation via dbt.
 - Dashboard creation in Power BI.
 
 Refer to individual tool documentation for detailed implementation.
-
