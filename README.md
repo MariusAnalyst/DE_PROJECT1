@@ -5,18 +5,25 @@
 - [Technologies Used](#technologies-used)
 - [Problem Description](#problem-description)
 - [Project Overview](#project-overview)
+- [Architecture Overview](#architecture-overview)
 - [Setup Instructions](#setup-instructions)
   - [GCP Project Configuration](#gcp-project-configuration)
   - [Terraform Deployment](#terraform-deployment)
   - [Docker Installation](#docker-installation)
   - [Spark Environment Setup](#spark-environment-setup)
+  - [Apache Airflow Installation and Configuration](#apache-airflow-installation-and-configuration)
   - [dbt Core Setup and BigQuery Configuration](#dbt-core-setup-and-bigquery-configuration)
-- [dbt Implementation Details](#dbt-implementation-details)
+- [Airflow Pipeline Details](#airflow-pipeline-details)
+  - [DAG Overview](#dag-overview)
+  - [DAG Execution Flow](#dag-execution-flow)
+- [dbt Transformation Details](#dbt-transformation-details)
   - [dbt Project Structure and Models](#dbt-project-structure-and-models)
   - [Running dbt Models](#running-dbt-models)
   - [Accessing Transformed Data](#accessing-transformed-data-in-bigquery)
-  - [Automating dbt Jobs](#automating-dbt-jobs-to-run-daily)
+- [Running the Complete Pipeline](#running-the-complete-pipeline)
+  - [Step-by-Step Execution](#step-by-step-execution)
   - [Monitoring and Troubleshooting](#monitoring-and-troubleshooting)
+- [Visualization in Power BI](#visualization-in-power-bi)
 - [Next Steps](#next-steps)
 
 ## Objective
@@ -50,7 +57,65 @@ The project encompasses:
 
 All development occurs within a GCP Virtual Machine for consistency.
 
-## Setup Instructions
+## Architecture Overview
+
+This project implements a modern data engineering pipeline with three key stages:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                     DATA PIPELINE ARCHITECTURE                  │
+└─────────────────────────────────────────────────────────────────┘
+
+STAGE 1: INFRASTRUCTURE (Terraform)
+┌──────────────────────────────────────────────────────────────────┐
+│  Google Cloud Platform                                           │
+│  ├── GCS Bucket (data lake)         - Stores raw/processed data │
+│  ├── BigQuery Dataset               - Data warehouse            │
+│  └── Compute Instance (n2-std-4)    - Runs Spark & Airflow     │
+└──────────────────────────────────────────────────────────────────┘
+                              ↓
+STAGE 2: ORCHESTRATION & INGESTION (Apache Airflow)
+┌──────────────────────────────────────────────────────────────────┐
+│  Airflow DAGs (Running in Docker)                               │
+│  ├── kaggle_ingestion_dag                                       │
+│  │   ├── Download from Kaggle                                   │
+│  │   └── Verify data integrity                                  │
+│  │                                                               │
+│  ├── gcp_upload_dag (Full Pipeline)                            │
+│  │   ├── Download from Kaggle                                   │
+│  │   ├── Upload to GCS (via PySpark)                           │
+│  │   └── Transfer GCS → BigQuery                                │
+│  │                                                               │
+│  └── gcs_to_bigquery_dag (Optional)                            │
+│      └── Direct GCS → BigQuery transfer                        │
+└──────────────────────────────────────────────────────────────────┘
+                              ↓
+STAGE 3: TRANSFORMATION & ANALYTICS (dbt)
+┌──────────────────────────────────────────────────────────────────┐
+│  dbt Models & Transformations                                    │
+│  ├── Staging Layer (Views)                                      │
+│  │   └── stg_mental_health: Clean & standardize raw data       │
+│  │                                                               │
+│  └── Mart Layer (Tables)                                        │
+│      └── fct_mental_health_analysis: Analytical fact table     │
+└──────────────────────────────────────────────────────────────────┘
+                              ↓
+STAGE 4: VISUALIZATION
+┌──────────────────────────────────────────────────────────────────┐
+│  Power BI Dashboards                                             │
+│  └── Connected to dbt fact tables in BigQuery                   │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+**Key Technologies**:
+- **Infrastructure**: Terraform + GCP
+- **Orchestration**: Apache Airflow (Docker)
+- **Processing**: PySpark + Spark 3.5.0
+- **Storage**: Google Cloud Storage (GCS) + BigQuery
+- **Transformation**: dbt (data build tool)
+- **Visualization**: Power BI
+
+
 
 ### GCP Project Configuration
 1. Create a new project in the [Google Cloud Console](https://console.cloud.google.com/).
@@ -385,20 +450,111 @@ Several key configurations were implemented to ensure smooth execution:
 Dag running spark, python uploading data to gcp and bigquery
 ![air_flow Dag](images/airflow_orchestration.png)
 
+## Airflow Pipeline Details
 
-## Next Steps
-With infrastructure in place, proceed to:
-- Data ingestion using python, spark 
-- Workflow orchestration with Airflow.
-- Data transformation via dbt.
-- Dashboard creation in Power BI.
+Apache Airflow orchestrates the complete data ingestion and transfer pipeline. The project includes three main DAGs that handle different aspects of the data pipeline.
 
- Installing dbt-core and Adapters
-With the virtual environment activated, install dbt-core along with the dbt-bigquery and dbt-duckdb adapters.
+### DAG Overview
 
-pip install dbt-core dbt-bigquery dbt-duckdb
+#### 1. **kaggle_ingestion_dag**
+**Purpose**: Basic data ingestion from Kaggle  
+**File**: `Apache_airflow/dags/mental_health_etl.py`  
+**Schedule**: Daily (@daily)  
+**Start Date**: 2026-04-10
 
-Refer to individual tool documentation for detailed implementation.
+**Tasks**:
+- `download_from_kaggle`: Authenticates to Kaggle API and downloads the Mental Health Dataset
+  - Dataset: `divaniazzahra/mental-health-dataset`
+  - Output: Extracted CSV files to `/opt/airflow/data`
+- `process_and_verify_data`: Reads the downloaded CSV and verifies data integrity
+  - Logs row count, column count, and sample data
+  - Ensures the file is valid before downstream processing
+
+**Dependencies**: `download_from_kaggle` >> `process_and_verify_data`
+
+**Configuration**:
+```yaml
+# From docker-compose.yml
+_PIP_ADDITIONAL_REQUIREMENTS: "kaggle pandas pyspark"
+Volume mounts:
+  - ../data:/opt/airflow/data (for downloaded datasets)
+  - ~/.kaggle:/home/airflow/.kaggle (for Kaggle API credentials)
+```
+
+#### 2. **gcp_upload_dag** (Full End-to-End Pipeline)
+**Purpose**: Complete pipeline: Kaggle → GCS → BigQuery  
+**File**: `Apache_airflow/dags/gcp_upload.py`  
+**Type**: Full orchestration with data processing
+
+**Tasks**:
+- `download_from_kaggle`: Downloads Mental Health Dataset from Kaggle
+- `upload_to_gcs`: Reads CSV and uploads to GCS as Parquet using PySpark
+  - Uses GCS connector for Hadoop 3
+  - Spark configuration includes GCP service account authentication
+  - Output path: `gs://mar_mental_health_bucket/mental_health_data/`
+- `load_to_bigquery`: Transfers Parquet data from GCS to BigQuery
+  - Destination: `teraform-mar.Mar_Mental_Health_Big_Data_Project.mental_health_data`
+  - Creates table with schema matching raw data structure
+
+**Data Schema** (17 fields):
+```
+Timestamp, Gender, Country, Occupation, self_employed, family_history, 
+treatment, Days_Indoors, Growing_Stress, Changes_Habits, 
+Mental_Health_History, Mood_Swings, Coping_Struggles, Work_Interest, 
+Social_Weakness, mental_health_interview, care_options
+```
+
+**Spark Configuration**:
+```python
+spark = SparkSession.builder \
+    .appName("MentalHealthDataUpload") \
+    .config("spark.jars.packages", "com.google.cloud.bigdataoss:gcs-connector:hadoop3-2.2.5") \
+    .getOrCreate()
+
+# GCP Authentication
+conf.set("google.cloud.auth.service.account.enable", "true")
+conf.set("google.cloud.auth.service.account.json.keyfile", "/opt/airflow/key/teraform-mar-0fb97fcd6586.json")
+```
+
+#### 3. **gcs_to_bigquery_dag** (Optional Direct Transfer)
+**Purpose**: Direct data transfer from GCS to BigQuery  
+**File**: `Apache_airflow/dags/gcs_to_bigquery.py`  
+
+**Tasks**:
+- `gcs_to_bigquery_transfer`: Uses GCSToBigQueryOperator for direct transfer
+  - Source: `gs://mar_mental_health_bucket/mental_health_data/*.parquet`
+  - Destination: BigQuery table
+  - Write disposition: WRITE_TRUNCATE (overwrites existing data)
+
+### DAG Execution Flow
+
+```
+Airflow Scheduler (Every Day)
+    ↓
+Kaggle Ingestion DAG
+    ├─→ Download from Kaggle
+    │   └─→ CSV to /opt/airflow/data
+    └─→ Verify Data Integrity
+        └─→ Log statistics
+
+    ↓ (or) ↓
+
+GCP Upload DAG (Full Pipeline)
+    ├─→ Download from Kaggle
+    │   └─→ CSV extracted to /opt/airflow/data
+    ├─→ Upload to GCS (PySpark)
+    │   ├─ Configure Spark + GCS Connector
+    │   ├─ Read CSV with defined schema
+    │   └─ Write to GCS as Parquet
+    │       └─→ gs://mar_mental_health_bucket/mental_health_data/
+    └─→ Transfer to BigQuery
+        └─→ teraform-mar.Mar_Mental_Health_Big_Data_Project.mental_health_data
+
+    ↓
+
+GCS to BigQuery DAG (Optional)
+    └─→ Direct transfer from GCS → BigQuery
+```
 
 ## dbt Core Setup and BigQuery Configuration
 
@@ -438,10 +594,10 @@ dbt uses a `profiles.yml` file to store connection details. This file is typical
 
 #### Service Account Key
 The project uses a Service Account JSON key for authentication, located at:
-`DE_PROJECT1/Terraform/keys/teraform-mar-0fb97fcd6586.json`
+`DE_PROJECT1/key/teraform-mar-0fb97fcd6586.json`
 
 #### profiles.yml Configuration
-Update your `profiles.yml` with the following:
+Update your `profiles.yml` with the following (adjust paths based on your system):
 
 ```yaml
 mental_health_data:
@@ -450,9 +606,9 @@ mental_health_data:
       type: bigquery
       method: service-account
       project: teraform-mar
-      dataset: mental_health_data
-      threads: 1
-      keyfile: C:\Users\amben\Desktop\Mentel_Health_Project\DE_PROJECT1\Terraform\keys\teraform-mar-0fb97fcd6586.json
+      dataset: Mar_Mental_Health_Big_Data_Project
+      threads: 4
+      keyfile: /path/to/teraform-mar-0fb97fcd6586.json
       location: US
       priority: interactive
       job_execution_timeout_seconds: 300
@@ -462,7 +618,7 @@ mental_health_data:
 
 ### 5. Verifying the Connection
 
-Navigate to the dbt project directory (`DE_PROJECT1/dbt/mental_health_data`) and run:
+Navigate to the dbt project directory (`dbt/mental_health_data`) and run:
 
 ```bash
 dbt debug
@@ -471,7 +627,7 @@ A successful connection will show `Connection test: [OK connection ok]`.
 
 ### 6. Working with Data Sources
 
-The raw data sources are defined in `models/sources.yml`. To pull data from the raw BigQuery dataset and create your first staging model:
+The raw data sources are defined in `models/staging/sources.yml`. To pull data from the raw BigQuery dataset and create your first staging model:
 
 ```bash
 # Run the staging model
@@ -480,7 +636,7 @@ dbt run --select stg_mental_health
 
 ---
 
-## dbt Implementation Details
+## dbt Transformation Details
 
 ### 7. dbt Project Structure and Models
 
@@ -488,55 +644,96 @@ The dbt project is organized as follows:
 
 ```
 dbt/mental_health_data/
-├── dbt_project.yml                 # Project configuration
+├── dbt_project.yml                           # Project configuration
 ├── models/
-│   ├── example/
+│   ├── staging/
+│   │   ├── stg_mental_health.sql             # Staging model (View)
+│   │   └── sources.yml                       # Source definitions
+│   │
+│   ├── marts/
+│   │   └── fct_mental_health_analysis.sql    # Fact table for analytics (Table)
+│   │
+│   ├── example/                              # Example models (optional)
 │   │   ├── my_first_dbt_model.sql
 │   │   ├── my_second_dbt_model.sql
 │   │   └── schema.yml
-│   ├── staging/
-│   │   ├── stg_mental_health.sql   # Primary staging model
-│   │   └── sources.yml             # Data source definitions
-│   ├── intermediate/               # (Placeholder for intermediate transformations)
-│   └── marts/
-│       └── fct_mental_health_analysis.sql  # Fact table with analytical dimensions
-├── macros/                         # Custom dbt macros
-├── tests/                          # Data quality tests
-├── seeds/                          # Static data files
-└── logs/                           # Execution logs
+│   │
+│   └── intermediate/                         # Placeholder for intermediate transformations
+│
+├── macros/                                   # Custom dbt macros
+├── tests/                                    # Data quality tests
+├── seeds/                                    # Static data files
+└── logs/                                     # Execution logs
+```
+
+#### Data Flow in dbt
+
+```
+BigQuery Raw Data
+    ↓
+Staging: stg_mental_health (View)
+    ├─ Source: raw_mental_health.mental_health_data
+    └─ Operation: Pass-through with SELECT *
+    ↓
+Mart: fct_mental_health_analysis (Table)
+    ├─ Dependency: stg_mental_health
+    ├─ Transformations:
+    │  ├─ Rename columns for clarity
+    │  │  (Timestamp → created_at, Gender → gender, etc.)
+    │  └─ Select analytical dimensions & measures
+    └─ Output: Analytical fact table ready for BI
+    ↓
+Power BI Dashboards
 ```
 
 #### Models Description
 
-1. **Staging Model (`stg_mental_health.sql`)**
-   - **Type**: View
-   - **Purpose**: Cleans and standardizes raw mental health data from BigQuery
-   - **Source**: `raw_mental_health.mental_health_data` table
-   - **Columns**: All columns from raw data (Timestamp, Gender, Country, Occupation, etc.)
-   - **Operations**: Simple transformation using `SELECT *` to pull data from source
+**1. Staging Model (`stg_mental_health.sql`)**
+- **Type**: View
+- **Materialization**: `view` (as configured in `dbt_project.yml`)
+- **Purpose**: Cleans and standardizes raw mental health data from BigQuery
+- **Source Definition**:
+  ```yaml
+  database: teraform-mar
+  schema: Mar_Mental_Health_Big_Data_Project
+  table: mental_health_data
+  ```
+- **Operations**: Simple pass-through SELECT to standardize raw data
+- **Output Columns**: All 17 columns from raw data
+  - Timestamp, Gender, Country, Occupation, self_employed, family_history, treatment
+  - Days_Indoors, Growing_Stress, Changes_Habits, Mental_Health_History
+  - Mood_Swings, Coping_Struggles, Work_Interest, Social_Weakness
+  - mental_health_interview, care_options
 
-2. **Fact Table Model (`fct_mental_health_analysis.sql`)**
-   - **Type**: Table (Default materialization)
-   - **Purpose**: Creates an analytical fact table with curated columns and cleaned naming conventions
-   - **Dependencies**: References `stg_mental_health` staging model
-   - **Key Dimensions**:
-     - `created_at` (from Timestamp)
-     - `gender`, `country`, `occupation`
-     - `self_employed` status
-   - **Mental Health Indicators**:
-     - Family history, treatment status
-     - Days indoors, growing stress levels
-     - Habit changes, mental health history
-     - Mood swings, coping struggles
-     - Work interest, social weakness
-     - Interview responses, care options
-   - **Output**: Ready for visualization and analysis in Power BI
+**2. Fact Table Model (`fct_mental_health_analysis.sql`)**
+- **Type**: Table
+- **Materialization**: `table` (as configured in `dbt_project.yml`)
+- **Purpose**: Creates an analytical fact table with curated columns and cleaned naming conventions
+- **Dependencies**: References `stg_mental_health` staging model via `{{ ref('stg_mental_health') }}`
+- **Key Transformations**:
+  - Column renaming for clarity and consistency
+  - Consolidation of related fields
+  - Ready for visualization
+- **Output Dimensions**:
+  - **Temporal**: `created_at` (from Timestamp)
+  - **Demographic**: `gender`, `country`, `occupation`
+  - **Employment**: `self_employed`
+  - **Health Indicators**: `family_history`, `treatment`, `mental_health_history`
+  - **Behavioral**: `days_indoors`, `growing_stress`, `changes_habits`, `mood_swings`
+  - **Social**: `coping_struggles`, `work_interest`, `social_weakness`
+  - **Response Data**: `mental_health_interview`, `care_options`
+- **Usage**: Connected to Power BI for dashboard creation
 
 ### 8. Running dbt Models
 
 #### Run All Models
 ```bash
-cd C:\Users\amben\Desktop\Mentel_Health_Project\DE_PROJECT1\dbt\mental_health_data
+cd dbt/mental_health_data
+
+# Activate virtual environment (if using one)
+source .venv/bin/activate
+
+# Run all models
 dbt run
 ```
 
@@ -547,6 +744,9 @@ dbt run --select stg_mental_health
 
 # Run only the fact table model
 dbt run --select fct_mental_health_analysis
+
+# Run with multiple threads for faster execution
+dbt run --threads 4
 ```
 
 #### Compile Models (Without Executing)
@@ -554,226 +754,378 @@ dbt run --select fct_mental_health_analysis
 dbt compile
 ```
 
-#### Generate Documentation
+#### Generate and View Documentation
 ```bash
+# Generate dbt documentation and lineage
 dbt docs generate
-dbt docs serve  # Opens documentation UI on localhost:8000
+
+# View documentation locally (opens on http://localhost:8000)
+dbt docs serve
+```
+
+#### Test Data Quality
+```bash
+# Run all data quality tests
+dbt test
+
+# Run tests for a specific model
+dbt test --select stg_mental_health
 ```
 
 ### 9. Accessing Transformed Data in BigQuery
 
 After running dbt models, the transformed data is available in BigQuery:
 
-**Dataset**: `mental_health_data` (in project `teraform-mar`)
+**Project**: `teraform-mar`  
+**Dataset**: `Mar_Mental_Health_Big_Data_Project`
 
-**Tables/Views Created**:
-- `my_first_dbt_model` (Table)
-- `stg_mental_health` (View)
-- `my_second_dbt_model` (View)
-- `fct_mental_health_analysis` (Table)
+**Objects Created**:
+- `stg_mental_health` (View) - Staging layer
+- `fct_mental_health_analysis` (Table) - Analytical fact table
 
 **Access Methods**:
 
-1. **BigQuery Console** (Web UI):
+1. **BigQuery Web Console**:
    - Navigate to [Google Cloud Console](https://console.cloud.google.com/)
-   - Go to BigQuery > Projects > `teraform-mar` > Dataset > `mental_health_data`
-   - View tables and execute SQL queries
+   - BigQuery > Projects > `teraform-mar` > Dataset > `Mar_Mental_Health_Big_Data_Project`
+   - View tables/views and execute SQL queries
 
 2. **Query in BigQuery**:
    ```sql
-   SELECT * FROM `teraform-mar.mental_health_data.fct_mental_health_analysis` LIMIT 10;
+   -- View transformed data
+   SELECT * FROM `teraform-mar.Mar_Mental_Health_Big_Data_Project.fct_mental_health_analysis` LIMIT 100;
    ```
 
 3. **Connect from Power BI**:
    - Create a new data source: BigQuery connector
    - Project: `teraform-mar`
-   - Dataset: `mental_health_data`
-   - Select tables for visualization
+   - Dataset: `Mar_Mental_Health_Big_Data_Project`
+   - Select `fct_mental_health_analysis` for dashboard creation
 
-### 10. Automating dbt Jobs to Run Daily
+## Running the Complete Pipeline
 
-dbt can be automated to run on a schedule using several approaches:
+### Step-by-Step Execution
 
-#### Option 1: Using dbt Cloud (Recommended for Production)
+This section provides a comprehensive guide to running the entire pipeline from start to finish.
 
-dbt Cloud provides a fully managed solution with scheduling, logging, and monitoring:
+#### Phase 1: Infrastructure Setup (One-time)
 
-1. **Sign Up**: Create an account at [dbt Cloud](https://cloud.getdbt.com/)
-
-2. **Connect Repository**:
-   - Link your GitHub/GitLab repository containing the dbt project
-   - Authorize dbt Cloud to access your repository
-
-3. **Create dbt Cloud Job**:
-   - Click "New Job" → "Deploy Job"
-   - Select your project and environment
-   - Command: `dbt run`
-   - Set schedule: Daily at a specific time (e.g., 2:00 AM UTC)
-
-4. **Configure Notifications** (Optional):
-   - Slack notifications on job success/failure
-   - Email alerts
-
-#### Option 2: Using Apache Airflow (Recommended for Hybrid Setup)
-
-Since your project already uses Airflow, add a dbt task to the pipeline:
-
-1. **Create Airflow DAG** (`Apache_airflow/dags/dbt_transformation_dag.py`):
-   ```python
-   from airflow import DAG
-   from airflow.operators.bash import BashOperator
-   from datetime import datetime, timedelta
-
-   default_args = {
-       'owner': 'data-engineering',
-       'retries': 2,
-       'retry_delay': timedelta(minutes=5),
-       'start_date': datetime(2024, 1, 1),
-   }
-
-   dag = DAG(
-       'daily_dbt_transformation',
-       default_args=default_args,
-       description='Run dbt models daily',
-       schedule_interval='0 2 * * *',  # 2 AM UTC every day
-       catchup=False,
-   )
-
-   dbt_run = BashOperator(
-       task_id='run_dbt_models',
-       bash_command="""
-           cd /path/to/dbt/mental_health_data && \
-           source .venv/bin/activate && \
-           dbt run --profiles-dir ~/.dbt
-       """,
-       dag=dag,
-   )
-
-   dbt_test = BashOperator(
-       task_id='test_dbt_models',
-       bash_command="""
-           cd /path/to/dbt/mental_health_data && \
-           source .venv/bin/activate && \
-           dbt test --profiles-dir ~/.dbt
-       """,
-       dag=dag,
-   )
-
-   dbt_run >> dbt_test
-   ```
-
-2. **Deploy in Airflow**:
-   - Copy the DAG file to `Apache_airflow/dags/`
-   - Refresh Airflow UI to register the DAG
-   - Enable the DAG and it will run automatically according to schedule
-
-3. **Monitor Execution**:
-   - View DAG runs in Airflow UI at http://localhost:8080
-   - Check logs for any failures
-
-#### Option 3: Using a Cron Job (Linux/Windows Task Scheduler)
-
-For simple scheduling without a full orchestration tool:
-
-**On Linux**:
 ```bash
-# Edit crontab
-crontab -e
+# 1. Navigate to Terraform directory
+cd Terraform
 
-# Add this line to run dbt daily at 2 AM
-0 2 * * * cd /path/to/dbt/mental_health_data && /path/to/.venv/bin/dbt run
+# 2. Initialize Terraform
+terraform init
+
+# 3. Review planned changes
+terraform plan
+
+# 4. Deploy infrastructure
+terraform apply
+
+# 5. Verify in GCP Console
+# - Check GCS bucket created
+# - Check BigQuery dataset created
+# - Check Compute Instance created
 ```
 
-**On Windows (Task Scheduler)**:
-1. Open Task Scheduler
-2. Create Basic Task → Set trigger to "Daily"
-3. Set time to 2:00 AM
-4. Action: Start a program
-5. Program: `C:\Users\amben\.venv\Scripts\python.exe`
-6. Arguments: `-m dbt.cli run`
-7. Start in: `C:\Users\amben\Desktop\Mentel_Health_Project\DE_PROJECT1\dbt\mental_health_data`
+#### Phase 2: Environment Setup (One-time)
 
-#### Option 4: Using GitHub Actions (CI/CD)
-
-Automate dbt runs via GitHub Actions on schedule:
-
-1. **Create Workflow File** (`.github/workflows/dbt-run.yml`):
-   ```yaml
-   name: Daily dbt Run
-   on:
-     schedule:
-       - cron: '0 2 * * *'  # Run daily at 2 AM UTC
-   
-   jobs:
-     dbt-run:
-       runs-on: ubuntu-latest
-       steps:
-         - uses: actions/checkout@v3
-         - name: Set up Python
-           uses: actions/setup-python@v4
-           with:
-             python-version: '3.10'
-         - name: Install dbt
-           run: |
-             pip install dbt-core dbt-bigquery
-         - name: Configure dbt
-           run: |
-             mkdir -p ~/.dbt
-             echo "${{ secrets.DBT_PROFILES_YML }}" > ~/.dbt/profiles.yml
-         - name: Run dbt
-           run: |
-             cd dbt/mental_health_data
-             dbt run
-   ```
-
-2. **Add Secrets**:
-   - GitHub Repo → Settings → Secrets
-   - Add `DBT_PROFILES_YML` with your `profiles.yml` content
-   - Add `GCP_SERVICE_ACCOUNT_KEY` for BigQuery authentication
-
-### 11. Monitoring and Troubleshooting
-
-#### View dbt Logs
 ```bash
-# Logs are stored in the dbt project
-ls -la dbt/mental_health_data/logs/
+# 1. SSH into the GCP Virtual Machine
+ssh -i ~/.ssh/KEY_FILENAME USERNAME@EXTERNAL_IP
 
-# View run results
-cat dbt/mental_health_data/target/run_results.json
+# 2. Install Java (OpenJDK 11)
+wget https://download.java.net/java/GA/jdk11/9/GPL/openjdk-11.0.2_linux-x64_bin.tar.gz
+tar xzfv openjdk-11.0.2_linux-x64_bin.tar.gz
+export JAVA_HOME="${HOME}/jdk-11.0.2"
+export PATH="${JAVA_HOME}/bin:${PATH}"
+
+# 3. Install Apache Spark
+wget https://archive.apache.org/dist/spark/spark-3.5.0/spark-3.5.0-bin-hadoop3.tgz
+tar xzfv spark-3.5.0-bin-hadoop3.tgz
+export SPARK_HOME="${HOME}/spark-3.5.0-bin-hadoop3"
+export PATH="${SPARK_HOME}/bin:${PATH}"
+
+# 4. Install GCS Connector
+wget https://storage.googleapis.com/hadoop-lib/gcs/gcs-connector-hadoop3-latest.jar
+mv gcs-connector-hadoop3-latest.jar ${SPARK_HOME}/jars/
+
+# 5. Install Docker and Docker Compose
+sudo apt update
+sudo apt install -y docker.io docker-compose-plugin
+sudo usermod -aG docker $USER
+
+# 6. Setup Kaggle credentials
+mkdir -p ~/.kaggle
+# Place your kaggle.json in ~/.kaggle/kaggle.json
+chmod 600 ~/.kaggle/kaggle.json
 ```
 
-#### Common Issues
+#### Phase 3: Start Airflow (Daily Orchestration)
 
-1. **Connection Errors**:
-   ```bash
-   dbt debug
-   ```
-   Ensures all configurations and connections are valid.
+```bash
+# 1. Navigate to Airflow directory
+cd Apache_airflow
 
-2. **Model Compilation Errors**:
-   - Check SQL syntax in model files
-   - Ensure all referenced sources exist in BigQuery
-   - Validate column names and data types
+# 2. Set permissions for shared directories
+chmod 777 ../data
 
-3. **Permission Issues**:
-   - Verify service account has `BigQuery Admin` and `Storage Admin` roles in GCP
-   - Check that `dbt_project.yml` and `profiles.yml` paths are correct
+# 3. Start Airflow services
+docker compose up -d
 
-4. **Performance Issues**:
-   - Monitor BigQuery job execution times
-   - Use dbt's `--threads` parameter to adjust concurrency:
-     ```bash
-     dbt run --threads 4
-     ```
+# 4. Wait for services to be ready (~30 seconds)
+sleep 30
 
-the linage in Dbt
+# 5. Access Airflow UI
+# Open http://localhost:8080
+# Username: admin | Password: admin
+
+# 6. Enable and trigger DAGs
+# In Airflow UI:
+# - Enable "kaggle_ingestion_dag" or "gcp_upload_dag"
+# - Monitor task execution in real-time
+# - Check logs for any errors
+```
+
+#### Phase 4: Monitor Data Ingestion
+
+```bash
+# Check if data has been downloaded
+ls -la ../data/
+
+# Verify data in GCS
+gsutil ls -r gs://mar_mental_health_bucket/
+
+# Verify data in BigQuery
+gcloud bigquery query --use_legacy_sql=false \
+  'SELECT COUNT(*) as row_count FROM `teraform-mar.Mar_Mental_Health_Big_Data_Project.mental_health_data`'
+```
+
+#### Phase 5: Transform Data with dbt
+
+```bash
+# 1. Navigate to dbt project
+cd ../dbt/mental_health_data
+
+# 2. Create and activate virtual environment
+python -m venv .venv
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+
+# 3. Install dbt and BigQuery adapter
+pip install dbt-core dbt-bigquery
+
+# 4. Configure dbt profiles
+# Edit ~/.dbt/profiles.yml with your project credentials
+
+# 5. Test dbt connection
+dbt debug
+
+# 6. Run dbt transformations
+dbt run
+dbt test
+
+# 7. Generate documentation
+dbt docs generate
+dbt docs serve
+```
+
+#### Phase 6: Visualize in Power BI
+
+```
+1. Open Power BI Desktop
+2. Get Data > Google BigQuery
+3. Project: teraform-mar
+4. Dataset: Mar_Mental_Health_Big_Data_Project
+5. Table: fct_mental_health_analysis
+6. Create visualizations and dashboards
+```
+
+### Complete Pipeline Automation
+
+To fully automate the pipeline, you can orchestrate dbt runs within Airflow:
+
+**Create DAG**: `Apache_airflow/dags/dbt_transformation_dag.py`
+
+```python
+from airflow import DAG
+from airflow.operators.bash import BashOperator
+from datetime import datetime, timedelta
+
+default_args = {
+    'owner': 'data-engineering',
+    'retries': 2,
+    'retry_delay': timedelta(minutes=5),
+    'start_date': datetime(2026, 4, 15),
+}
+
+with DAG(
+    'daily_dbt_transformation',
+    default_args=default_args,
+    description='Run dbt transformations daily after data ingestion',
+    schedule_interval='0 3 * * *',  # 3 AM UTC every day (after 2 AM ingestion)
+    catchup=False,
+) as dag:
+
+    dbt_run = BashOperator(
+        task_id='run_dbt_models',
+        bash_command="""
+            cd /path/to/dbt/mental_health_data && \
+            source .venv/bin/activate && \
+            dbt run --profiles-dir ~/.dbt
+        """,
+    )
+
+    dbt_test = BashOperator(
+        task_id='test_dbt_models',
+        bash_command="""
+            cd /path/to/dbt/mental_health_data && \
+            source .venv/bin/activate && \
+            dbt test --profiles-dir ~/.dbt
+        """,
+    )
+
+    dbt_run >> dbt_test
+```
+
+Deploy this DAG to Airflow:
+```bash
+cp dbt_transformation_dag.py Apache_airflow/dags/
+docker compose restart airflow-scheduler
+```
+
+### Monitoring and Troubleshooting
+
+#### Airflow Monitoring
+
+```bash
+# Check service status
+docker compose ps
+
+# View logs for a specific service
+docker compose logs airflow-webserver
+docker compose logs airflow-scheduler
+
+# Execute a command in running container
+docker compose exec airflow-webserver airflow dags test kaggle_ingestion_dag
+
+# Check PostgreSQL connection
+docker compose exec postgres pg_isready -U airflow -d airflow
+```
+
+#### Common Airflow Issues
+
+| Issue | Solution |
+|-------|----------|
+| DAG not appearing in UI | Restart scheduler: `docker compose restart airflow-scheduler` |
+| `ModuleNotFoundError: kaggle` | Verify `_PIP_ADDITIONAL_REQUIREMENTS` in docker-compose.yml |
+| `Permission denied` on data folder | Run `chmod 777 ../data` on host machine |
+| GCP authentication failed | Verify service account JSON is in `/opt/airflow/key/` and readable |
+
+#### dbt Monitoring
+
+```bash
+cd dbt/mental_health_data
+
+# Check dbt debug info
+dbt debug
+
+# View compiled SQL
+dbt compile
+cat target/compiled/mental_health_data/models/staging/stg_mental_health.sql
+
+# Run with debug logging
+dbt run --debug
+
+# View execution logs
+tail -f logs/dbt.log
+```
+
+#### BigQuery Verification
+
+```bash
+# Check table row counts
+gcloud bigquery query --use_legacy_sql=false \
+  'SELECT table_name, row_count FROM `teraform-mar.Mar_Mental_Health_Big_Data_Project.__TABLES__` ORDER BY row_count DESC'
+
+# View table schema
+gcloud bigquery show --schema teraform-mar:Mar_Mental_Health_Big_Data_Project.fct_mental_health_analysis
+
+# Sample data
+gcloud bigquery query --use_legacy_sql=false \
+  'SELECT * FROM `teraform-mar.Mar_Mental_Health_Big_Data_Project.fct_mental_health_analysis` LIMIT 5'
+```
+
+#### dbt Lineage
+
+View the transformed data flow:
 ![dbt lineage](images/dbt_lineage.png)
 
+## Visualization in Power BI
 
-Visualization in Power BI
-connection to dbt fact table in big query using the big query connection in power BI
-and generation of charts
+The `fct_mental_health_analysis` table in BigQuery is designed to be directly connected to Power BI dashboards.
 
+**Connection Steps**:
+1. Open Power BI Desktop
+2. Get Data → BigQuery (enter project ID: `teraform-mar`)
+3. Navigate to dataset `Mar_Mental_Health_Big_Data_Project`
+4. Select table `fct_mental_health_analysis`
+5. Create visualizations based on dimensions and measures
+
+**Power BI Report**:
 ![Power BI report](images/powerbi_report.png)
 
+## Next Steps
 
+With the complete pipeline implemented, you can:
+1. **Monitor Data Quality**: Add dbt tests and Great Expectations for data validation
+2. **Enhance Transformations**: Add more intermediate models and complex transformations
+3. **Scale Analytics**: Create additional fact and dimension tables for deeper insights
+4. **Automate Fully**: Schedule all DAGs and dbt runs for production-level automation
+5. **Add Documentation**: Document business logic and data lineage for stakeholders
+6. **Optimize Performance**: Fine-tune Spark jobs and BigQuery queries for cost-efficiency
+
+## Project Structure Summary
+
+```
+DE_PROJECT1/
+├── Terraform/                          # Infrastructure as Code
+│   ├── main.tf                         # Cloud resources definition
+│   ├── variable.tf                     # Variable definitions
+│   └── key/                            # GCP service account keys
+│
+├── Apache_airflow/                     # Workflow Orchestration
+│   ├── docker-compose.yml              # Airflow containers setup
+│   ├── dags/                           # DAG definitions
+│   │   ├── mental_health_etl.py        # Basic ingestion DAG
+│   │   ├── gcp_upload.py               # Full pipeline DAG (Kaggle→GCS→BigQuery)
+│   │   └── gcs_to_bigquery.py          # Direct transfer DAG
+│   ├── config/                         # Airflow configuration
+│   ├── logs/                           # Task execution logs
+│   └── plugins/                        # Custom plugins
+│
+├── dbt/                                # Data Transformation
+│   └── mental_health_data/
+│       ├── dbt_project.yml             # dbt project config
+│       ├── models/
+│       │   ├── staging/
+│       │   │   ├── stg_mental_health.sql  # Staging view
+│       │   │   └── sources.yml            # Data sources
+│       │   └── marts/
+│       │       └── fct_mental_health_analysis.sql  # Fact table
+│       ├── macros/                     # Custom macros
+│       ├── tests/                      # Data quality tests
+│       └── seeds/                      # Static data
+│
+├── data/                               # Local data storage
+├── images/                             # Documentation images
+│   ├── airflow_orchestration.png
+│   ├── dbt_lineage.png
+│   └── powerbi_report.png
+│
+├── key/                                # GCP authentication keys
+├── README.md                           # This file
+└── ingestion script.ipynb              # Manual ingestion notebook
+```
+
+For detailed implementation instructions and troubleshooting, refer to the relevant sections above.
